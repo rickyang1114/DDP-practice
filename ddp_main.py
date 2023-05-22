@@ -124,6 +124,8 @@ def main(local_rank, args):
     if local_rank == 0:
         print(f'begin testing')
     test(model, test_dloader)
+    if local_rank == 0:
+        torch.save({'model': model.state_dict(), 'scaler': scaler.state_dict()}, 'ddp_checkpoint.pt')
     dist.destroy_process_group()
 
 

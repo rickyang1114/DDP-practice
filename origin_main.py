@@ -86,6 +86,7 @@ def main(args):
         train(model, train_dloader, criterion, optimizer)
     print(f'begin testing')
     test(model, test_dloader)
+    torch.save({'model': model.state_dict()}, 'origin_checkpoint.pt')
 
 
 if __name__ == '__main__':
