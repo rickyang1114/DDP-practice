@@ -29,6 +29,7 @@ def prepare():
                         help='number of batchsize')
     args = parser.parse_args()
 
+    # 下面几行是新加的，用于启动多进程 DDP
     os.environ['MASTER_ADDR'] = 'localhost'  # 0号机器的IP
     os.environ['MASTER_PORT'] = '19198'  # 0号机器的可用端口
     os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu  # 使用哪些GPU
@@ -38,7 +39,8 @@ def prepare():
 
 
 def init_ddp(local_rank):
-    torch.cuda.set_device(local_rank)
+    # 有了这一句之后，在转换device的时候直接使用 a=a.cuda()即可，否则要用a=a.cuda(local+rank)
+    torch.cuda.set_device(local_rank)  
     os.environ['RANK'] = str(local_rank)
     dist.init_process_group(backend='nccl', init_method='env://')
 
@@ -58,9 +60,9 @@ def train(model, train_dloader, criterion, optimizer, scaler):
         outputs = model(images)
         loss = criterion(outputs, labels)
         optimizer.zero_grad()
-        scaler.scale(loss).backward()
-        scaler.step(optimizer)
-        scaler.update()
+        scaler.scale(loss).backward()  ###
+        scaler.step(optimizer)  ###
+        scaler.update()  ###
 
 
 def test(model, test_dloader):
@@ -75,41 +77,40 @@ def test(model, test_dloader):
             outputs = model(images)
             size += images.size(0)
         correct += (outputs.argmax(1) == labels).type(torch.float).sum()
-    dist.reduce(size, 0, op=dist.ReduceOp.SUM)
-    dist.reduce(correct, 0, op=dist.ReduceOp.SUM)
+    dist.reduce(size, 0, op=dist.ReduceOp.SUM)  ###
+    dist.reduce(correct, 0, op=dist.ReduceOp.SUM)  ###
     if local_rank == 0:
         acc = correct / size
         print(f'Accuracy is {acc:.2%}')
 
-
 def main(local_rank, args):
-    init_ddp(local_rank)
-    model = ConvNet().cuda()
+    init_ddp(local_rank)  ### 进程初始化
+    model = ConvNet().cuda()  ### 模型的 forward 方法变了
+    model = nn.SyncBatchNorm.convert_sync_batchnorm(model)  ### 转换模型的 BN 层
+    model = nn.parallel.DistributedDataParallel(model, device_ids=[local_rank])  ### 套 DDP
     criterion = nn.CrossEntropyLoss().cuda()
     optimizer = torch.optim.SGD(model.parameters(), 1e-4)
-    model = nn.SyncBatchNorm.convert_sync_batchnorm(model)
-    model = nn.parallel.DistributedDataParallel(model, device_ids=[local_rank])
-    scaler = GradScaler()
+    scaler = GradScaler()  ###  用于混合精度训练
     train_dataset = torchvision.datasets.MNIST(root='./data',
                                                train=True,
                                                transform=transforms.ToTensor(),
                                                download=True)
     train_sampler = torch.utils.data.distributed.DistributedSampler(
-        train_dataset)
-    g = get_ddp_generator()
+        train_dataset)  ### 用于在 DDP 环境下采样
+    g = get_ddp_generator()  ###
     train_dloader = torch.utils.data.DataLoader(dataset=train_dataset,
                                                 batch_size=args.batch_size,
-                                                shuffle=False,
-                                                num_workers=0,
+                                                shuffle=False,  ### shuffle 通过 sampler 完成
+                                                num_workers=4,
                                                 pin_memory=True,
                                                 sampler=train_sampler,
-                                                generator=g)
+                                                generator=g)  ### 添加额外的 generator
     test_dataset = torchvision.datasets.MNIST(root='./data',
                                               train=False,
                                               transform=transforms.ToTensor(),
                                               download=True)
     test_sampler = torch.utils.data.distributed.DistributedSampler(
-        test_dataset)
+        test_dataset)  ### 用于在 DDP 环境下采样
     test_dloader = torch.utils.data.DataLoader(dataset=test_dataset,
                                                batch_size=args.batch_size,
                                                shuffle=False,
@@ -117,17 +118,16 @@ def main(local_rank, args):
                                                pin_memory=True,
                                                sampler=test_sampler)
     for epoch in range(args.epochs):
-        if local_rank == 0:
+        if local_rank == 0:  ### 防止每个进程都输出一次
             print(f'begin training of epoch {epoch + 1}/{args.epochs}')
-        train_dloader.sampler.set_epoch(epoch)
+        train_dloader.sampler.set_epoch(epoch)  ### 防止采样出 bug
         train(model, train_dloader, criterion, optimizer, scaler)
     if local_rank == 0:
         print(f'begin testing')
     test(model, test_dloader)
-    if local_rank == 0:
+    if local_rank == 0:  ### 防止每个进程都保存一次
         torch.save({'model': model.state_dict(), 'scaler': scaler.state_dict()}, 'ddp_checkpoint.pt')
     dist.destroy_process_group()
-
 
 if __name__ == '__main__':
     args = prepare()

@@ -67,7 +67,7 @@ def main(args):
         dataset=train_dataset,
         batch_size=args.batch_size,
         shuffle=True,
-        num_workers=0,
+        num_workers=4,
         pin_memory=True,
     )
     test_dataset = torchvision.datasets.MNIST(root='./data',

@@ -1,5 +1,5 @@
+import torch
 import torch.nn as nn
-from torch.cuda.amp import autocast
 
 
 class ConvNet(nn.Module):
@@ -17,9 +17,9 @@ class ConvNet(nn.Module):
         self.fc = nn.Linear(7 * 7 * 32, num_classes)
 
     def forward(self, x):
-        with autocast():
+        with torch.cuda.amp.autocast(): # 混合精度，加速推理
             out = self.layer1(x)
             out = self.layer2(out)
             out = out.reshape(out.size(0), -1)
             out = self.fc(out)
-            return out
+        return out
