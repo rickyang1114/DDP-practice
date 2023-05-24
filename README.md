@@ -1,8 +1,11 @@
+#! https://zhuanlan.zhihu.com/p/631679614
 # 一看就懂的DDP代码实践
 
 本文对 PyTorch 中的 DistributedDataParallel（DDP）及混合精度模块的使用方式进行讲解。
 
 关于 DDP 的原理及其相较于 DataParallel（DP）的优势，前人之述备矣，本文不再花费大量篇幅。
+
+> 更新：添加 torchrun 启动方式示例
 
 ## 目录
 - [一看就懂的DDP代码实践](#一看就懂的ddp代码实践)
@@ -23,6 +26,7 @@
       - [scaler](#scaler)
     - [训练](#训练-1)
     - [测试](#测试-1)
+  - [用torchrun启动](#用torchrun启动)
   - [Checklist](#checklist)
   - [PS](#ps)
 
@@ -32,7 +36,7 @@
 
 ## 原型
 
-首先，给出不使用 DDP 和 混合精度加速的代码。
+首先，给出不使用 DDP 和 混合精度加速的代码。完整程序在[这里](https://github.com/rickyang1114/DDP-practice/blob/main/origin_main.py)。
 
 ### 入口
 
@@ -196,7 +200,7 @@ time elapsed: 22.72 seconds
 
 ## DDP示例
 
-在介绍完原型后，以下对代码进行改造，以使用DDP。
+在介绍完原型后，以下对代码进行改造，以使用DDP。完整程序在[这里](https://github.com/rickyang1114/DDP-practice/blob/main/ddp_main.py)。
 
 ### 入口
 
@@ -446,6 +450,31 @@ Accuracy is 89.21%
 
 time elapsed: 30.82 seconds
 ```
+
+## 用torchrun启动
+
+上述是通过`mp.spawn`启动。`mp`模块对`multiprocessing`库进行封装，并没有特定针对`DDP`。我们还可以通过官方推荐的`torchrun`进行启动。完整的程序在[这里](https://github.com/rickyang1114/DDP-practice/blob/main/ddp_main_torchrun.py)。
+
+相比`mp.spawn`启动，`torchrun`自动控制一些环境变量的设置，因而更为方便。我们只需要设置`os.environ['CUDA_VISIBLE_DEVICES']`即可（不设置默认为该机器上的所有GPU）即可，而无需设置`os.environ['MASTER_ADDR']`等。此外，`main`函数不再需要`local_rank`参数。程序入口变为：
+
+```python
+if __name__ == '__main__':
+    args = prepare()
+    time_start = time.time()
+    main(args)
+    time_elapsed = time.time() - time_start
+    local_rank = int(os.environ['LOCAL_RANK'])
+    if local_rank == 0:
+        print(f'\ntime elapsed: {time_elapsed:.2f} seconds')
+```
+
+运行脚本的命令由`python`变为了`torchrun`，如下：
+
+```bash
+torchrun --standalone --nproc_per_node=2 ddp_main_torchrun.py --gpu 0,1
+```
+
+其中，`nproc_per_node`表示进程数，将其设置为使用的GPU数量即可。
 
 ## Checklist
 
