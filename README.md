@@ -242,7 +242,7 @@ def prepare():
                         help='number of batchsize')
     args = parser.parse_args()
     
-	# 下面几行是新加的，用于启动多进程 DDP
+    # 下面几行是新加的，用于启动多进程 DDP。使用 torchrun 启动时只需要设置使用的 GPU
     os.environ['MASTER_ADDR'] = 'localhost'  # 0号机器的 IP
     os.environ['MASTER_PORT'] = '19198'  # 0号机器的可用端口，随便选一个没被占用的
     os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu  # 使用哪些 GPU
@@ -309,7 +309,7 @@ def main(local_rank, args):
 
 ```python
 def init_ddp(local_rank):
-    # 有了这一句之后，在转换device的时候直接使用 a=a.cuda()即可，否则要用a=a.cuda(local+rank)
+    # 有了这一句之后，在转换device的时候直接使用 a=a.cuda()即可，否则要用a=a.cuda(local_rank)
     torch.cuda.set_device(local_rank)  
     os.environ['RANK'] = str(local_rank)
     dist.init_process_group(backend='nccl', init_method='env://')
