@@ -9,7 +9,28 @@ import torch.distributed as dist
 import torch.multiprocessing as mp
 from torch.cuda.amp import GradScaler
 
-from ddp_model import ConvNet
+
+class ConvNet(nn.Module):
+
+    def __init__(self, num_classes=10):
+        super(ConvNet, self).__init__()
+        self.layer1 = nn.Sequential(
+            nn.Conv2d(1, 16, kernel_size=5, stride=1, padding=2),
+            nn.BatchNorm2d(16), nn.ReLU(), nn.MaxPool2d(kernel_size=2,
+                                                        stride=2))
+        self.layer2 = nn.Sequential(
+            nn.Conv2d(16, 32, kernel_size=5, stride=1, padding=2),
+            nn.BatchNorm2d(32), nn.ReLU(), nn.MaxPool2d(kernel_size=2,
+                                                        stride=2))
+        self.fc = nn.Linear(7 * 7 * 32, num_classes)
+
+    def forward(self, x):
+        with torch.cuda.amp.autocast():  # 混合精度，加速推理
+            out = self.layer1(x)
+            out = self.layer2(out)
+            out = out.reshape(out.size(0), -1)
+            out = self.fc(out)
+        return out
 
 
 def prepare():
@@ -40,7 +61,7 @@ def prepare():
 
 def init_ddp(local_rank):
     # 有了这一句之后，在转换device的时候直接使用 a=a.cuda()即可，否则要用a=a.cuda(local+rank)
-    torch.cuda.set_device(local_rank)  
+    torch.cuda.set_device(local_rank)
     os.environ['RANK'] = str(local_rank)
     dist.init_process_group(backend='nccl', init_method='env://')
 
@@ -83,11 +104,14 @@ def test(model, test_dloader):
         acc = correct / size
         print(f'Accuracy is {acc:.2%}')
 
+
 def main(local_rank, args):
     init_ddp(local_rank)  ### 进程初始化
     model = ConvNet().cuda()  ### 模型的 forward 方法变了
     model = nn.SyncBatchNorm.convert_sync_batchnorm(model)  ### 转换模型的 BN 层
-    model = nn.parallel.DistributedDataParallel(model, device_ids=[local_rank])  ### 套 DDP
+    model = nn.parallel.DistributedDataParallel(model,
+                                                device_ids=[local_rank
+                                                            ])  ### 套 DDP
     criterion = nn.CrossEntropyLoss().cuda()
     optimizer = torch.optim.SGD(model.parameters(), 1e-4)
     scaler = GradScaler()  ###  用于混合精度训练
@@ -98,13 +122,14 @@ def main(local_rank, args):
     train_sampler = torch.utils.data.distributed.DistributedSampler(
         train_dataset)  ### 用于在 DDP 环境下采样
     g = get_ddp_generator()  ###
-    train_dloader = torch.utils.data.DataLoader(dataset=train_dataset,
-                                                batch_size=args.batch_size,
-                                                shuffle=False,  ### shuffle 通过 sampler 完成
-                                                num_workers=4,
-                                                pin_memory=True,
-                                                sampler=train_sampler,
-                                                generator=g)  ### 添加额外的 generator
+    train_dloader = torch.utils.data.DataLoader(
+        dataset=train_dataset,
+        batch_size=args.batch_size,
+        shuffle=False,  ### shuffle 通过 sampler 完成
+        num_workers=4,
+        pin_memory=True,
+        sampler=train_sampler,
+        generator=g)  ### 添加额外的 generator
     test_dataset = torchvision.datasets.MNIST(root='./data',
                                               train=False,
                                               transform=transforms.ToTensor(),
@@ -126,8 +151,12 @@ def main(local_rank, args):
         print(f'begin testing')
     test(model, test_dloader)
     if local_rank == 0:  ### 防止每个进程都保存一次
-        torch.save({'model': model.state_dict(), 'scaler': scaler.state_dict()}, 'ddp_checkpoint.pt')
+        torch.save({
+            'model': model.state_dict(),
+            'scaler': scaler.state_dict()
+        }, 'ddp_checkpoint.pt')
     dist.destroy_process_group()
+
 
 if __name__ == '__main__':
     args = prepare()
