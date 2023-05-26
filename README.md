@@ -363,7 +363,7 @@ scaler = GradScaler()  ###  用于混合精度训练
 
 ### 训练
 
-训练时，需要使用 DDP 的sampler，并且在`num_workers > 1`时需要传入`generator`，否则对于同一个worker，所有进程将会获得同样的data，参见[这篇文章](https://zhuanlan.zhihu.com/p/618639620)。
+训练时，需要使用 DDP 的sampler，并且在`num_workers > 1`时需要传入`generator`，否则对于同一个worker，所有进程的augmentation相同，减弱训练的随机性。详细分析参见[这篇文章](https://zhuanlan.zhihu.com/p/618639620)。
 
 ```python
 def get_ddp_generator(seed=3407):
